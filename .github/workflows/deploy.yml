@@ -1,0 +1,95 @@
+name: Deploy
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Environment to deploy to'
+        required: true
+        default: 'staging'
+        type: choice
+        options:
+          - staging
+          - production
+
+env:
+  AWS_REGION: us-east-1
+
+jobs:
+  deploy-docker:
+    runs-on: ubuntu-latest
+    environment: ${{ github.event.inputs.environment || 'production' }}
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+    
+    - name: Configure AWS credentials
+      uses: aws-actions/configure-aws-credentials@v4
+      with:
+        aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+        aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+        aws-region: ${{ env.AWS_REGION }}
+    
+    - name: Login to Amazon ECR
+      id: login-ecr
+      uses: aws-actions/amazon-ecr-login@v2
+    
+    - name: Build and push Docker image
+      env:
+        ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
+        ECR_REPOSITORY: softauth
+        IMAGE_TAG: ${{ github.sha }}
+      run: |
+        docker build \
+          --build-arg ADMIN_USERNAME=${{ secrets.ADMIN_USERNAME }} \
+          --build-arg ADMIN_PASSWORD=${{ secrets.ADMIN_PASSWORD }} \
+          --build-arg ADMIN_SALT=${{ secrets.ADMIN_SALT }} \
+          -t $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG \
+          -t $ECR_REGISTRY/$ECR_REPOSITORY:latest .
+        docker push $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG
+        docker push $ECR_REGISTRY/$ECR_REPOSITORY:latest
+
+  deploy-serverless:
+    runs-on: ubuntu-latest
+    environment: ${{ github.event.inputs.environment || 'production' }}
+    needs: deploy-docker
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+    
+    - name: Configure AWS credentials
+      uses: aws-actions/configure-aws-credentials@v4
+      with:
+        aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+        aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+        aws-region: ${{ env.AWS_REGION }}
+    
+    - name: Deploy CloudFormation stack
+      env:
+        STACK_NAME: softauth-${{ github.event.inputs.environment || 'production' }}
+        ECR_REPOSITORY: softauth
+      run: |
+        aws cloudformation deploy \
+          --template-file cloudformation-template.yaml \
+          --stack-name $STACK_NAME \
+          --parameter-overrides \
+            Environment=${{ github.event.inputs.environment || 'production' }} \
+            ImageUri=${{ secrets.AWS_ACCOUNT_ID }}.dkr.ecr.${{ env.AWS_REGION }}.amazonaws.com/$ECR_REPOSITORY:${{ github.sha }} \
+            AdminUsername=${{ secrets.ADMIN_USERNAME }} \
+            AdminPassword=${{ secrets.ADMIN_PASSWORD }} \
+            AdminSalt=${{ secrets.ADMIN_SALT }} \
+          --capabilities CAPABILITY_IAM \
+          --no-fail-on-empty-changeset
+    
+    - name: Get deployment outputs
+      env:
+        STACK_NAME: softauth-${{ github.event.inputs.environment || 'production' }}
+      run: |
+        aws cloudformation describe-stacks \
+          --stack-name $STACK_NAME \
+          --query 'Stacks[0].Outputs' \
+          --output table

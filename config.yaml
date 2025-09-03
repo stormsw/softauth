@@ -1,0 +1,5 @@
+admin:
+  username: admin
+  salt: mysalt
+  # Replace <hashed_password> with the output of pbkdf2Sync('admin', 'mysalt', 1000, 64, 'sha512').toString('hex')
+  password: <hashed_password>
