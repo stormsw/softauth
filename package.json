@@ -43,7 +43,7 @@
     "jest-environment-jsdom": "^29.5.0",
     "node-mocks-http": "^1.12.0",
     "typescript": "5.9.2",
-    "eslint": "^8.0.0",
+    "eslint": "^9.34.0",
     "eslint-config-next": "latest",
     "audit-ci": "^6.6.1"
   }
